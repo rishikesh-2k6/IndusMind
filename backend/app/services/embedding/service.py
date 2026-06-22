@@ -1,13 +1,17 @@
 """Embedding generation with caching and retry.
 
-One provider is active per deployment (config EMBEDDING_PROVIDER). Gemini (768-d)
-and Sentence Transformers (e.g. MiniLM, 384-d) produce different dimensions and
-therefore cannot share a Chroma collection — switching providers requires a
-re-index. "Retry" happens within the active provider, not across providers.
+Vercel-friendly: Gemini embeddings only (no torch / sentence-transformers). When
+no Gemini key is configured, a deterministic hash-based mock embedding is used so
+the system still runs locally and in tests. Mock vectors are low quality but keep
+the full pipeline exercisable offline.
+
+Gemini text-embedding-004 returns 768-dim vectors, matching the pgvector column.
 """
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import math
 
 from tenacity import retry, stop_after_attempt, wait_exponential
 
@@ -23,23 +27,24 @@ class EmbeddingService:
     """Generates embeddings for single texts or batches, with an LRU cache."""
 
     def __init__(self) -> None:
-        self._provider = settings.embedding_provider.lower()
+        self._dim = settings.embedding_dim
         self._cache = EmbeddingCache()
-        self._st_model = None  # lazy SentenceTransformer
-        self._gemini_ready = False
-
-        if self._provider == "gemini" and not settings.has_gemini:
+        self._provider = "gemini" if settings.has_gemini else "mock"
+        if self._provider == "mock":
             logger.warning(
-                "EMBEDDING_PROVIDER=gemini but GEMINI_API_KEY is missing; "
-                "falling back to sentence_transformers"
+                "GEMINI_API_KEY not set; EmbeddingService using deterministic mock "
+                "embeddings (set the key for real retrieval quality)"
             )
-            self._provider = "sentence_transformers"
-
-        logger.info("EmbeddingService provider: %s", self._provider)
+        else:
+            logger.info("EmbeddingService provider: gemini (%d dims)", self._dim)
 
     @property
     def provider(self) -> str:
         return self._provider
+
+    @property
+    def dim(self) -> int:
+        return self._dim
 
     async def generate_embedding(self, text: str) -> list[float]:
         cached = self._cache.get(text)
@@ -75,7 +80,7 @@ class EmbeddingService:
         try:
             if self._provider == "gemini":
                 return await self._embed_gemini(texts)
-            return await self._embed_sentence_transformers(texts)
+            return [self._mock_embedding(t) for t in texts]
         except Exception as exc:  # noqa: BLE001
             raise EmbeddingError(f"Embedding failed: {exc}") from exc
 
@@ -97,21 +102,16 @@ class EmbeddingService:
 
         return await asyncio.to_thread(_run)
 
-    async def _embed_sentence_transformers(self, texts: list[str]) -> list[list[float]]:
-        model = self._load_st_model()
-
-        def _run() -> list[list[float]]:
-            vectors = model.encode(texts, normalize_embeddings=True)
-            return [v.tolist() for v in vectors]
-
-        return await asyncio.to_thread(_run)
-
-    def _load_st_model(self):
-        if self._st_model is None:
-            from sentence_transformers import SentenceTransformer
-
-            logger.info(
-                "Loading SentenceTransformer '%s'", settings.sentence_transformer_model
-            )
-            self._st_model = SentenceTransformer(settings.sentence_transformer_model)
-        return self._st_model
+    def _mock_embedding(self, text: str) -> list[float]:
+        """Deterministic pseudo-embedding from a hash, L2-normalised."""
+        vec: list[float] = []
+        counter = 0
+        while len(vec) < self._dim:
+            digest = hashlib.sha256(f"{text}|{counter}".encode("utf-8")).digest()
+            for b in digest:
+                vec.append((b / 255.0) * 2.0 - 1.0)  # map byte -> [-1, 1]
+                if len(vec) >= self._dim:
+                    break
+            counter += 1
+        norm = math.sqrt(sum(x * x for x in vec)) or 1.0
+        return [x / norm for x in vec]

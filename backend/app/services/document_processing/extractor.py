@@ -80,13 +80,17 @@ def _extract_docx(data: bytes) -> str:
 
 
 def _extract_xlsx(data: bytes) -> str:
-    import pandas as pd
+    from openpyxl import load_workbook
 
-    sheets = pd.read_excel(io.BytesIO(data), sheet_name=None, dtype=str)
+    wb = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
     parts: list[str] = []
-    for name, frame in sheets.items():
-        parts.append(f"# Sheet: {name}")
-        parts.append(frame.fillna("").to_csv(index=False))
+    for ws in wb.worksheets:
+        parts.append(f"# Sheet: {ws.title}")
+        for row in ws.iter_rows(values_only=True):
+            cells = ["" if c is None else str(c) for c in row]
+            if any(cells):
+                parts.append(", ".join(cells))
+    wb.close()
     return "\n".join(parts)
 
 

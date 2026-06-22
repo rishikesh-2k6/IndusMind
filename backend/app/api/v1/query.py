@@ -59,7 +59,7 @@ async def query(
 
     await chat_repo.add_message(session_id=session_id, role="user", content=body.question)
 
-    response = await container.rag.answer(body.question, top_k=body.top_k)
+    response = await container.rag.answer(db, body.question, top_k=body.top_k)
 
     await chat_repo.add_message(
         session_id=session_id,
@@ -76,13 +76,15 @@ async def query(
 async def search(
     body: SearchRequest,
     _: Annotated[CurrentUser, Depends(require_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
     container: Annotated[ServiceContainer, Depends(get_container)],
 ) -> SearchResponse:
     query_vec = await container.embedder.generate_embedding(body.query)
     matches = await container.vector_store.search(
+        db,
         query_embedding=query_vec,
         top_k=body.top_k,
-        document_id=str(body.document_id) if body.document_id else None,
+        document_id=body.document_id,
     )
     results = [
         SearchResult(

@@ -27,7 +27,7 @@ def configure_logging() -> None:
     root.addHandler(handler)
 
     # Quiet noisy third-party loggers.
-    for noisy in ("httpx", "httpcore", "chromadb", "urllib3"):
+    for noisy in ("httpx", "httpcore", "urllib3"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
     _CONFIGURED = True

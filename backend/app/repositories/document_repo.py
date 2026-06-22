@@ -62,10 +62,18 @@ class DocumentRepository:
             doc.page_count = page_count
 
     async def add_chunks(
-        self, document_id: uuid.UUID, chunks: list[str]
+        self,
+        document_id: uuid.UUID,
+        chunks: list[str],
+        embeddings: list[list[float]] | None = None,
     ) -> list[Chunk]:
         objs = [
-            Chunk(document_id=document_id, chunk_index=i, text=text)
+            Chunk(
+                document_id=document_id,
+                chunk_index=i,
+                text=text,
+                embedding=embeddings[i] if embeddings is not None else None,
+            )
             for i, text in enumerate(chunks)
         ]
         self._session.add_all(objs)

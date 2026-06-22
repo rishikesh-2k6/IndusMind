@@ -1,6 +1,8 @@
 """The RAG brain: embed question -> vector search -> build context -> Gemini."""
 from __future__ import annotations
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.models.schemas import QueryResponse, Source
@@ -23,11 +25,15 @@ class RAGOrchestrator:
         self._store = vector_store
         self._gemini = gemini
 
-    async def answer(self, question: str, *, top_k: int | None = None) -> QueryResponse:
+    async def answer(
+        self, session: AsyncSession, question: str, *, top_k: int | None = None
+    ) -> QueryResponse:
         top_k = top_k or settings.retrieval_top_k
 
         query_vec = await self._embedder.generate_embedding(question)
-        matches = await self._store.search(query_embedding=query_vec, top_k=top_k)
+        matches = await self._store.search(
+            session, query_embedding=query_vec, top_k=top_k
+        )
 
         if not matches:
             return QueryResponse(

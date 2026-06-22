@@ -53,7 +53,6 @@ def build_container() -> ServiceContainer:
         processor=processor,
         chunker=chunker,
         embedder=embedder,
-        vector_store=vector_store,
     )
 
     return ServiceContainer(

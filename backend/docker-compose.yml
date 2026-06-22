@@ -1,32 +1,37 @@
-# Industrial Knowledge Brain — backend stack.
-# Supabase (auth + storage + Postgres) is hosted; only the app and ChromaDB run here.
+# Industrial Knowledge Brain — local backend stack.
+# For production use hosted Supabase (Postgres + pgvector + Auth + Storage) and
+# only run the `api` service. This compose file spins up a local pgvector Postgres
+# so you can run fully offline.
 services:
-  chromadb:
-    image: chromadb/chroma:0.5.23
-    container_name: ikb-chromadb
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: ikb-db
     restart: unless-stopped
-    ports:
-      - "8001:8000"
-    volumes:
-      - chroma_data:/chroma/chroma
     environment:
-      - IS_PERSISTENT=TRUE
-      - ANONYMIZED_TELEMETRY=FALSE
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
 
   api:
     build: .
     container_name: ikb-api
     restart: unless-stopped
     depends_on:
-      - chromadb
+      - db
     ports:
       - "8000:8000"
     env_file:
       - .env
     environment:
-      # Override host so the API reaches Chroma over the compose network.
-      - CHROMA_HOST=chromadb
-      - CHROMA_PORT=8000
+      # Point at the local pgvector Postgres and auto-create tables.
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/postgres
+      - AUTO_CREATE_TABLES=true
+      # No Supabase locally -> auth off and local-disk storage.
+      - AUTH_ENABLED=false
 
 volumes:
-  chroma_data:
+  db_data:

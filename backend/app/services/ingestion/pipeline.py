@@ -1,8 +1,12 @@
-"""Background ingestion pipeline.
+"""Document ingestion pipeline.
 
-Runs after upload: extract -> chunk -> persist chunks -> embed -> index in Chroma,
-updating the document's status throughout. Owns its own DB session because it runs
-outside the request lifecycle (FastAPI BackgroundTasks).
+Runs after upload: extract -> chunk -> embed -> persist chunks (with embeddings)
+into Postgres/pgvector, updating the document status throughout. Owns its own DB
+session because it may run outside the request that triggered it.
+
+On Vercel this runs synchronously inside the upload request (serverless has no
+durable background workers); on a long-running server it can be awaited or
+scheduled — either way the logic is identical.
 """
 from __future__ import annotations
 
@@ -15,8 +19,6 @@ from app.repositories.document_repo import DocumentRepository
 from app.services.chunking.service import ChunkingService
 from app.services.document_processing.service import DocumentProcessor
 from app.services.embedding.service import EmbeddingService
-from app.services.vector_store.service import VectorStore
-from app.utils.ids import chunk_id
 
 logger = get_logger(__name__)
 
@@ -29,13 +31,11 @@ class IngestionPipeline:
         processor: DocumentProcessor,
         chunker: ChunkingService,
         embedder: EmbeddingService,
-        vector_store: VectorStore,
     ) -> None:
         self._sessionmaker = sessionmaker
         self._processor = processor
         self._chunker = chunker
         self._embedder = embedder
-        self._store = vector_store
 
     async def run(
         self, *, document_id: uuid.UUID, file_name: str, data: bytes
@@ -50,42 +50,24 @@ class IngestionPipeline:
                 await self._finish(document_id, "failed", error="No text extracted")
                 return
 
-            await self._persist_and_index(document_id, file_name, chunks, processed.page_count)
+            embeddings = await self._embedder.generate_batch_embeddings(chunks)
+            await self._persist(document_id, chunks, embeddings)
             await self._finish(document_id, "ready", page_count=processed.page_count)
             logger.info("Ingestion complete for %s (%d chunks)", document_id, len(chunks))
         except Exception as exc:  # noqa: BLE001
             logger.exception("Ingestion failed for %s", document_id)
             await self._finish(document_id, "failed", error=str(exc)[:500])
 
-    async def _persist_and_index(
+    async def _persist(
         self,
         document_id: uuid.UUID,
-        file_name: str,
         chunks: list[str],
-        page_count: int,
+        embeddings: list[list[float]],
     ) -> None:
         async with self._sessionmaker() as session:
             repo = DocumentRepository(session)
-            await repo.add_chunks(document_id, chunks)
+            await repo.add_chunks(document_id, chunks, embeddings)
             await session.commit()
-
-        embeddings = await self._embedder.generate_batch_embeddings(chunks)
-
-        ids = [chunk_id(document_id, i) for i in range(len(chunks))]
-        metadatas = [
-            {
-                "document_id": str(document_id),
-                "file_name": file_name,
-                "chunk_index": i,
-            }
-            for i in range(len(chunks))
-        ]
-        await self._store.index(
-            ids=ids,
-            documents=chunks,
-            embeddings=embeddings,
-            metadatas=metadatas,
-        )
 
     async def _finish(
         self,

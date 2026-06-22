@@ -1,6 +1,11 @@
 import { supabase } from '../lib/supabase';
 
-export const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+// On Vercel the API is served from the same origin (/api/*), so an empty base
+// URL (relative requests) is correct. In local dev, default to the backend on
+// :8000. An explicit VITE_API_URL always wins.
+export const API_URL =
+  import.meta.env.VITE_API_URL ??
+  (import.meta.env.DEV ? 'http://localhost:8000' : '');
 
 async function authHeaders() {
   if (!supabase) return {};

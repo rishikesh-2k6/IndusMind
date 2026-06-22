@@ -1,13 +1,18 @@
-"""ChromaDB-backed vector store: index, search, delete by document."""
+"""Supabase pgvector similarity search over the chunks table.
+
+Vectors live alongside their text in the `chunks` table, so deleting a document
+(chunks cascade) also removes its vectors — there is no separate vector store to
+keep in sync. Indexing happens when chunks are inserted with their embeddings.
+"""
 from __future__ import annotations
 
-import asyncio
+import uuid
 from dataclasses import dataclass
 
-from app.core.logging import get_logger
-from app.db.chroma_client import get_collection
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-logger = get_logger(__name__)
+from app.models.orm import Chunk, Document
 
 
 @dataclass(slots=True)
@@ -21,80 +26,47 @@ class VectorMatch:
 
 
 class VectorStore:
-    """Thin async wrapper around the Chroma collection."""
-
-    async def index(
-        self,
-        *,
-        ids: list[str],
-        documents: list[str],
-        embeddings: list[list[float]],
-        metadatas: list[dict],
-    ) -> None:
-        if not ids:
-            return
-        await asyncio.to_thread(
-            self._upsert, ids, documents, embeddings, metadatas
-        )
-
-    def _upsert(self, ids, documents, embeddings, metadatas) -> None:
-        collection = get_collection()
-        collection.upsert(
-            ids=ids,
-            documents=documents,
-            embeddings=embeddings,
-            metadatas=metadatas,
-        )
-        logger.info("Indexed %d vectors", len(ids))
+    """Cosine-similarity search backed by pgvector."""
 
     async def search(
         self,
+        session: AsyncSession,
         *,
         query_embedding: list[float],
         top_k: int,
-        document_id: str | None = None,
+        document_id: uuid.UUID | None = None,
     ) -> list[VectorMatch]:
-        where = {"document_id": document_id} if document_id else None
-        raw = await asyncio.to_thread(self._query, query_embedding, top_k, where)
-        return self._to_matches(raw)
-
-    def _query(self, query_embedding, top_k, where):
-        collection = get_collection()
-        return collection.query(
-            query_embeddings=[query_embedding],
-            n_results=top_k,
-            where=where,
-            include=["documents", "metadatas", "distances"],
+        distance = Chunk.embedding.cosine_distance(query_embedding).label("distance")
+        stmt = (
+            select(
+                Chunk.id,
+                Chunk.document_id,
+                Chunk.chunk_index,
+                Chunk.text,
+                Document.file_name,
+                distance,
+            )
+            .join(Document, Document.id == Chunk.document_id)
+            .where(Chunk.embedding.isnot(None))
+            .order_by(distance)
+            .limit(top_k)
         )
+        if document_id is not None:
+            stmt = stmt.where(Chunk.document_id == document_id)
 
-    @staticmethod
-    def _to_matches(raw) -> list[VectorMatch]:
-        ids = (raw.get("ids") or [[]])[0]
-        docs = (raw.get("documents") or [[]])[0]
-        metas = (raw.get("metadatas") or [[]])[0]
-        dists = (raw.get("distances") or [[]])[0]
-
+        rows = (await session.execute(stmt)).all()
         matches: list[VectorMatch] = []
-        for cid, text, meta, dist in zip(ids, docs, metas, dists):
-            meta = meta or {}
-            # Cosine distance -> similarity.
+        for cid, doc_id, idx, text, file_name, dist in rows:
+            # cosine_distance is in [0, 2]; similarity = 1 - distance.
             score = max(0.0, 1.0 - float(dist))
             matches.append(
                 VectorMatch(
-                    chunk_id=cid,
-                    document_id=str(meta.get("document_id", "")),
-                    file_name=str(meta.get("file_name", "")),
-                    chunk_index=int(meta.get("chunk_index", 0)),
+                    chunk_id=str(cid),
+                    document_id=str(doc_id),
+                    file_name=file_name or "",
+                    chunk_index=int(idx),
                     text=text or "",
                     score=round(score, 4),
                 )
             )
         return matches
-
-    async def delete_document(self, document_id: str) -> None:
-        await asyncio.to_thread(self._delete, document_id)
-
-    def _delete(self, document_id: str) -> None:
-        collection = get_collection()
-        collection.delete(where={"document_id": document_id})
-        logger.info("Deleted vectors for document %s", document_id)

@@ -5,6 +5,7 @@
 -- ===========================================================================
 
 create extension if not exists "pgcrypto";
+create extension if not exists vector;
 
 -- --------------------------------------------------------------------------
 -- profiles: role source of truth, keyed by the Supabase auth user id.
@@ -60,9 +61,15 @@ create table if not exists public.chunks (
     id          uuid primary key default gen_random_uuid(),
     document_id uuid not null references public.documents (id) on delete cascade,
     chunk_index integer not null,
-    text        text not null
+    text        text not null,
+    embedding   vector(768)   -- Gemini text-embedding-004
 );
 create index if not exists idx_chunks_document on public.chunks (document_id);
+
+-- Approximate-nearest-neighbour index for cosine similarity search.
+-- (Build after some rows exist; lists ~ sqrt(rowcount).)
+create index if not exists idx_chunks_embedding
+    on public.chunks using ivfflat (embedding vector_cosine_ops) with (lists = 100);
 
 -- --------------------------------------------------------------------------
 -- chat_sessions / chat_messages

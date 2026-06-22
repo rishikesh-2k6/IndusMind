@@ -11,44 +11,48 @@ answers via RAG + Gemini.
 ## Architecture
 
 ```
-Admin → POST /documents/upload → Supabase Storage + documents row (processing)
-                                       ↓ background task
-        extract → clean → chunk (1000/200) → embed → ChromaDB → status=ready
+Admin → POST /documents/upload → Supabase Storage + documents row
+        extract → clean → chunk (1000/200) → embed → pgvector → status=ready
+        (synchronous ingestion, so it works on serverless / Vercel)
 
-User → POST /query → embed → Chroma top-k → context → Gemini
+User → POST /query → embed → pgvector top-k → context → Gemini
                  → { answer, sources[], confidence_score, related_documents[] }
 ```
 
 - **API:** FastAPI (async), repository pattern (router → service → repository)
-- **Auth + Storage + Postgres:** Supabase (hosted)
-- **Vector DB:** ChromaDB
-- **LLM + embeddings:** Gemini (Sentence Transformers as an alternate backend)
+- **Auth + Storage + Postgres + vectors:** Supabase (Postgres + **pgvector**)
+- **LLM + embeddings:** Gemini (768-d `text-embedding-004`); deterministic mock
+  embeddings when no key is set, so it runs offline
+
+> Deployable on **Vercel** as a Python serverless function — see
+> [`../DEPLOY_VERCEL.md`](../DEPLOY_VERCEL.md). Heavy deps (torch, ChromaDB,
+> PaddleOCR) are intentionally excluded to fit the serverless size limit.
 
 ## Layout
 
 ```
 app/
   core/        config, logging, exceptions, security, deps, container
-  db/          sqlalchemy engine, supabase storage, chroma client
-  models/      ORM tables + Pydantic schemas
+  db/          sqlalchemy engine, supabase storage
+  models/      ORM tables (incl. pgvector embedding) + Pydantic schemas
   repositories/
   services/    document_processing, chunking, embedding, vector_store,
                ingestion, rag, summarization, llm
-  api/v1/      health, documents, query, chat
+  api/v1/      health, auth, documents, query, chat
 sql/schema.sql
 tests/
 ```
 
-## Quick start (Docker)
+## Quick start (Docker — local pgvector Postgres)
 
 ```bash
 cd backend
-cp .env.example .env        # fill in Supabase + Gemini values
+cp .env.example .env        # add GEMINI_API_KEY (DB/auth are overridden for local)
 docker compose up --build
 ```
 
-- API:    http://localhost:8000  (docs at `/docs`)
-- Chroma: http://localhost:8001
+Spins up a local `pgvector/pgvector` Postgres + the API at http://localhost:8000
+(docs at `/docs`), with `AUTH_ENABLED=false` and tables auto-created.
 
 ## Quick start (local Python)
 
@@ -60,10 +64,12 @@ cp .env.example .env
 uvicorn app.main:app --reload
 ```
 
-To run with **no external services** (mock LLM, local Chroma, no auth):
+To run with **no external services** (mock LLM + mock embeddings, no auth) you
+still need a Postgres with pgvector for storage/search; the Docker path above is
+the easiest. For a pure smoke test without a DB:
 
 ```bash
-AUTH_ENABLED=false uvicorn app.main:app --reload
+AUTH_ENABLED=false uvicorn app.main:app --reload   # /health works; queries need a DB
 ```
 
 ## Supabase setup
@@ -88,6 +94,7 @@ resolves the role from `profiles`. `require_admin` guards write endpoints;
 | Method | Path                              | Role  |
 |--------|-----------------------------------|-------|
 | GET    | `/health`                         | open  |
+| GET    | `/api/v1/auth/me`                 | user  |
 | POST   | `/api/v1/documents/upload`        | admin |
 | GET    | `/api/v1/documents`               | admin |
 | GET    | `/api/v1/documents/{id}`          | admin |
@@ -96,6 +103,7 @@ resolves the role from `profiles`. `require_admin` guards write endpoints;
 | POST   | `/api/v1/query`                   | user  |
 | POST   | `/api/v1/search`                  | user  |
 | POST   | `/api/v1/summarize`               | user  |
+| GET    | `/api/v1/library`                 | user  |
 | GET    | `/api/v1/chat/sessions`           | user  |
 | GET    | `/api/v1/chat/sessions/{id}`      | user  |
 
@@ -129,11 +137,13 @@ pytest
 
 See `.env.example`. Notable flags:
 
-- `EMBEDDING_PROVIDER` — `gemini` (768-d) or `sentence_transformers` (384-d). One
-  provider per Chroma collection; switching requires a re-index.
-- `ENABLE_OCR` — off by default (PaddleOCR is heavy). Enable + install paddleocr
-  to process images/scanned documents.
+- `EMBEDDING_PROVIDER` — `gemini` (768-d) or `mock` (offline deterministic). The
+  pgvector column is fixed at `EMBEDDING_DIM` (768); changing it needs a re-index.
+- `ENABLE_OCR` — off by default (PaddleOCR is heavy and excluded from the Vercel
+  build). Enable + install paddleocr locally to process images/scanned documents.
 - `AUTH_ENABLED=false` — local dev escape hatch (returns a synthetic admin).
+- `AUTO_CREATE_TABLES` — create tables + enable pgvector on startup (handy for the
+  Docker/local DB; set `false` on Supabase where you run `sql/schema.sql`).
 
 ## Extension points (not in this MVP)
 

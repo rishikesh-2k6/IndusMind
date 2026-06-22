@@ -29,8 +29,13 @@ _DEV_USER = CurrentUser(
 
 def get_container(request: Request) -> ServiceContainer:
     container = getattr(request.app.state, "container", None)
-    if container is None:  # pragma: no cover - defensive
-        raise RuntimeError("Service container not initialised")
+    if container is None:
+        # Serverless runtimes (e.g. Vercel) may not run ASGI lifespan startup,
+        # so build the container lazily and cache it on first request.
+        from app.core.container import build_container
+
+        container = build_container()
+        request.app.state.container = container
     return container
 
 

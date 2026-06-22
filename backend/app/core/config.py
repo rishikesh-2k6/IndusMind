@@ -43,13 +43,10 @@ class Settings(BaseSettings):
     gemini_embedding_model: str = "models/text-embedding-004"
 
     # ---- Embeddings ----
-    embedding_provider: str = "gemini"  # "gemini" | "sentence_transformers"
-    sentence_transformer_model: str = "all-MiniLM-L6-v2"
-
-    # ---- ChromaDB ----
-    chroma_host: str = "localhost"
-    chroma_port: int = 8001
-    chroma_collection: str = "industrial_documents"
+    # Gemini text-embedding-004 -> 768 dims. The pgvector column is fixed to this
+    # size, so changing the dimension requires a schema change + re-index.
+    embedding_provider: str = "gemini"  # "gemini" | "mock"
+    embedding_dim: int = 768
 
     # ---- Chunking / retrieval ----
     chunk_size: int = 1000

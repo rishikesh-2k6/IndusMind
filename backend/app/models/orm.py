@@ -4,9 +4,12 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import ForeignKey, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+
+from app.core.config import settings
 
 
 class Base(DeclarativeBase):
@@ -48,7 +51,7 @@ class Document(Base):
 
 
 class Chunk(Base):
-    """A text chunk derived from a document. Mirrors the Chroma vector entries."""
+    """A text chunk derived from a document, with its pgvector embedding."""
 
     __tablename__ = "chunks"
 
@@ -60,6 +63,10 @@ class Chunk(Base):
     )
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
     text: Mapped[str] = mapped_column(Text, nullable=False)
+    # pgvector embedding; nullable until the chunk has been embedded.
+    embedding: Mapped[list[float] | None] = mapped_column(
+        Vector(settings.embedding_dim), nullable=True
+    )
 
     document: Mapped["Document"] = relationship(back_populates="chunks")
 

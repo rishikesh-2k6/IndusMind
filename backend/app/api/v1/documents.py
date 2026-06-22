@@ -4,7 +4,7 @@ from __future__ import annotations
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, UploadFile, status
+from fastapi import APIRouter, Depends, File, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.container import ServiceContainer
@@ -22,9 +22,8 @@ from app.services.document_processing.extractor import detect_file_type
 router = APIRouter(prefix="/documents", tags=["documents"])
 
 
-@router.post("/upload", response_model=UploadResponse, status_code=status.HTTP_202_ACCEPTED)
+@router.post("/upload", response_model=UploadResponse, status_code=status.HTTP_201_CREATED)
 async def upload_document(
-    background: BackgroundTasks,
     admin: Annotated[CurrentUser, Depends(require_admin)],
     db: Annotated[AsyncSession, Depends(get_db)],
     container: Annotated[ServiceContainer, Depends(get_container)],
@@ -48,16 +47,16 @@ async def upload_document(
         storage_path, data, file.content_type or "application/octet-stream"
     )
     doc.storage_path = storage_path
+    doc_id = doc.id
+    # Commit the document row before ingestion so it exists in its own session.
+    await db.commit()
 
-    # Process and index in the background; the request returns immediately.
-    background.add_task(
-        container.ingestion.run,
-        document_id=doc.id,
-        file_name=file_name,
-        data=data,
-    )
+    # Process and index synchronously (serverless has no durable background tasks).
+    await container.ingestion.run(document_id=doc_id, file_name=file_name, data=data)
 
-    return UploadResponse(document_id=doc.id, file_name=file_name, status="processing")
+    refreshed = await repo.get(doc_id)
+    final_status = refreshed.status if refreshed else "processing"
+    return UploadResponse(document_id=doc_id, file_name=file_name, status=final_status)
 
 
 @router.get("", response_model=list[DocumentOut])
@@ -107,8 +106,8 @@ async def delete_document(
     if doc is None:
         raise NotFoundError(f"Document {document_id} not found")
 
-    # Remove vectors and stored file, then the DB rows (chunks cascade).
-    await container.vector_store.delete_document(str(document_id))
+    # Remove the stored file, then the DB rows. Chunks (and their pgvector
+    # embeddings) cascade-delete with the document.
     if doc.storage_path:
         await container.storage.delete(doc.storage_path)
     await repo.delete(document_id)

@@ -18,22 +18,60 @@ logger = get_logger(__name__)
 
 
 async def _maybe_create_tables() -> None:
-    """In development, create our tables if they don't exist (best-effort)."""
+    """Read schema.sql and execute the statements on the database."""
     if not settings.has_database:
         logger.warning("DATABASE_URL not set; skipping table creation")
         return
     if os.getenv("AUTO_CREATE_TABLES", "true").lower() != "true":
         return
     try:
+        from sqlalchemy import text
         from app.db.session import get_engine
-        from app.models.orm import Base
+
+        # Resolve path to schema.sql
+        app_dir = os.path.dirname(os.path.dirname(__file__))
+        schema_path = os.path.join(app_dir, "sql", "schema.sql")
+        if not os.path.exists(schema_path):
+            logger.warning("schema.sql not found at %s", schema_path)
+            return
+
+        logger.info("Reading schema from %s", schema_path)
+        with open(schema_path, "r", encoding="utf-8") as f:
+            schema_sql = f.read()
+
+        # Split into individual statements, respecting $$ function bodies
+        statements = []
+        current = []
+        in_function = False
+
+        for line in schema_sql.split('\n'):
+            stripped = line.strip()
+            if not stripped and not in_function and not current:
+                continue
+
+            dollar_count = stripped.count('$$')
+            if dollar_count % 2 == 1:
+                in_function = not in_function
+
+            current.append(line)
+
+            if stripped.endswith(';') and not in_function:
+                stmt = '\n'.join(current).strip()
+                if stmt and not stmt.startswith('--'):
+                    statements.append(stmt)
+                current = []
 
         engine = get_engine()
         async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-        logger.info("Database tables ensured")
+            for stmt in statements:
+                first_line = stmt.split('\n')[0][:80]
+                logger.info("Executing statement: %s", first_line)
+                await conn.execute(text(stmt))
+
+        logger.info("Database schema initialized successfully from schema.sql!")
     except Exception as exc:  # noqa: BLE001
-        logger.warning("Could not ensure tables (continuing): %s", exc)
+        logger.warning("Could not initialize database schema (continuing): %s", exc)
+
 
 
 @asynccontextmanager
