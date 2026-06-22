@@ -31,6 +31,10 @@ def get_engine() -> AsyncEngine:
             pool_size=5,
             max_overflow=10,
             future=True,
+            # Supabase's pgbouncer pooler (used on serverless) does not support
+            # server-side prepared statements; disabling the cache keeps asyncpg
+            # compatible with transaction-mode pooling.
+            connect_args={"statement_cache_size": 0},
         )
         logger.info("Async database engine created")
     return _engine

@@ -39,8 +39,8 @@ class Settings(BaseSettings):
 
     # ---- Gemini ----
     gemini_api_key: str = ""
-    gemini_model: str = "gemini-1.5-flash"
-    gemini_embedding_model: str = "models/text-embedding-004"
+    gemini_model: str = "gemini-2.5-flash"
+    gemini_embedding_model: str = "models/gemini-embedding-001"
 
     # ---- Embeddings ----
     # Gemini text-embedding-004 -> 768 dims. The pgvector column is fixed to this

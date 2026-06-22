@@ -96,6 +96,9 @@ class EmbeddingService:
                     model=settings.gemini_embedding_model,
                     content=text,
                     task_type="retrieval_document",
+                    # gemini-embedding-001 defaults to 3072 dims; pin to the
+                    # pgvector column size so vectors fit the schema.
+                    output_dimensionality=self._dim,
                 )
                 out.append(resp["embedding"])
             return out
