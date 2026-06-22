@@ -71,6 +71,44 @@ class Chunk(Base):
     document: Mapped["Document"] = relationship(back_populates="chunks")
 
 
+class KgEntity(Base):
+    """A knowledge-graph entity extracted from a document (equipment, failure, …)."""
+
+    __tablename__ = "kg_entities"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)  # equipment|failure|…
+    key: Mapped[str] = mapped_column(String(128), nullable=False)  # normalized id
+    label: Mapped[str] = mapped_column(String(512), nullable=False)
+    attributes: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    document_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("documents.id", ondelete="CASCADE"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
+
+
+class KgRelation(Base):
+    """A directed relationship between two knowledge-graph entities."""
+
+    __tablename__ = "kg_relations"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    src_kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    src_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    dst_kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    dst_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    relation: Mapped[str] = mapped_column(String(48), nullable=False)
+    attributes: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    document_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("documents.id", ondelete="CASCADE"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
+
+
 class ChatSession(Base):
     """A conversation session belonging to a user."""
 

@@ -72,6 +72,34 @@ create index if not exists idx_chunks_embedding
     on public.chunks using ivfflat (embedding vector_cosine_ops) with (lists = 100);
 
 -- --------------------------------------------------------------------------
+-- knowledge graph: entities + relations (equipment history, failure patterns)
+-- --------------------------------------------------------------------------
+create table if not exists public.kg_entities (
+    id          uuid primary key default gen_random_uuid(),
+    kind        text not null,   -- equipment | failure | maintenance | inspection | …
+    key         text not null,   -- normalized id, e.g. 'p101', 'bearing_wear'
+    label       text not null,
+    attributes  jsonb,
+    document_id uuid references public.documents (id) on delete cascade,
+    created_at  timestamptz not null default now()
+);
+create index if not exists idx_kg_entities_kind_key on public.kg_entities (kind, key);
+
+create table if not exists public.kg_relations (
+    id          uuid primary key default gen_random_uuid(),
+    src_kind    text not null,
+    src_key     text not null,
+    dst_kind    text not null,
+    dst_key     text not null,
+    relation    text not null,   -- has_failure | underwent_maintenance | inspected_in | …
+    attributes  jsonb,
+    document_id uuid references public.documents (id) on delete cascade,
+    created_at  timestamptz not null default now()
+);
+create index if not exists idx_kg_relations_src on public.kg_relations (src_kind, src_key);
+create index if not exists idx_kg_relations_relation on public.kg_relations (relation);
+
+-- --------------------------------------------------------------------------
 -- chat_sessions / chat_messages
 -- --------------------------------------------------------------------------
 create table if not exists public.chat_sessions (

@@ -15,6 +15,7 @@ from app.db.supabase_client import StorageService
 from app.services.chunking.service import ChunkingService
 from app.services.document_processing.service import DocumentProcessor
 from app.services.embedding.service import EmbeddingService
+from app.services.entity_extraction.service import EntityExtractor
 from app.services.ingestion.pipeline import IngestionPipeline
 from app.services.llm.gemini_client import GeminiClient
 from app.services.rag.orchestrator import RAGOrchestrator
@@ -31,6 +32,7 @@ class ServiceContainer:
     vector_store: VectorStore
     processor: DocumentProcessor
     chunker: ChunkingService
+    extractor: EntityExtractor
     rag: RAGOrchestrator
     summarizer: SummarizationService
     ingestion: IngestionPipeline
@@ -45,6 +47,7 @@ def build_container() -> ServiceContainer:
     vector_store = VectorStore()
     processor = DocumentProcessor()
     chunker = ChunkingService()
+    extractor = EntityExtractor(gemini)
 
     rag = RAGOrchestrator(embedder, vector_store, gemini)
     summarizer = SummarizationService(gemini)
@@ -53,6 +56,7 @@ def build_container() -> ServiceContainer:
         processor=processor,
         chunker=chunker,
         embedder=embedder,
+        extractor=extractor,
     )
 
     return ServiceContainer(
@@ -63,6 +67,7 @@ def build_container() -> ServiceContainer:
         vector_store=vector_store,
         processor=processor,
         chunker=chunker,
+        extractor=extractor,
         rag=rag,
         summarizer=summarizer,
         ingestion=ingestion,

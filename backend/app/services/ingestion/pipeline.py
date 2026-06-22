@@ -16,9 +16,11 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.core.logging import get_logger
 from app.repositories.document_repo import DocumentRepository
+from app.repositories.kg_repo import KnowledgeGraphRepository
 from app.services.chunking.service import ChunkingService
 from app.services.document_processing.service import DocumentProcessor
 from app.services.embedding.service import EmbeddingService
+from app.services.entity_extraction.service import EntityExtractor
 
 logger = get_logger(__name__)
 
@@ -31,11 +33,13 @@ class IngestionPipeline:
         processor: DocumentProcessor,
         chunker: ChunkingService,
         embedder: EmbeddingService,
+        extractor: EntityExtractor,
     ) -> None:
         self._sessionmaker = sessionmaker
         self._processor = processor
         self._chunker = chunker
         self._embedder = embedder
+        self._extractor = extractor
 
     async def run(
         self, *, document_id: uuid.UUID, file_name: str, data: bytes
@@ -52,6 +56,7 @@ class IngestionPipeline:
 
             embeddings = await self._embedder.generate_batch_embeddings(chunks)
             await self._persist(document_id, chunks, embeddings)
+            await self._extract_graph(document_id, processed.text)
             await self._finish(document_id, "ready", page_count=processed.page_count)
             logger.info("Ingestion complete for %s (%d chunks)", document_id, len(chunks))
         except Exception as exc:  # noqa: BLE001
@@ -68,6 +73,30 @@ class IngestionPipeline:
             repo = DocumentRepository(session)
             await repo.add_chunks(document_id, chunks, embeddings)
             await session.commit()
+
+    async def _extract_graph(self, document_id: uuid.UUID, text: str) -> None:
+        """Extract entities/relations into the knowledge graph (best-effort).
+
+        Failures here never fail ingestion — the document is still searchable via
+        RAG even if graph extraction is unavailable.
+        """
+        if not self._extractor.enabled:
+            return
+        try:
+            graph = await self._extractor.extract(text)
+            if not graph.entities and not graph.relations:
+                return
+            async with self._sessionmaker() as session:
+                kg = KnowledgeGraphRepository(session)
+                await kg.add_entities(document_id, graph.entities)
+                await kg.add_relations(document_id, graph.relations)
+                await session.commit()
+            logger.info(
+                "KG for %s: %d entities, %d relations",
+                document_id, len(graph.entities), len(graph.relations),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("KG extraction failed for %s (continuing): %s", document_id, exc)
 
     async def _finish(
         self,

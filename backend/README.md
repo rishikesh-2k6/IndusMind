@@ -17,11 +17,27 @@ universal text decoder. True binaries are rejected with a clear error and the
 document is marked `failed`. Uploads stream to **Supabase Storage** (bucket
 auto-created); chunks + embeddings land in **Supabase Postgres (pgvector)**.
 
+## Knowledge graph
+
+During ingestion, Gemini also extracts **industrial entities** (equipment,
+failures, maintenance, inspections, incidents, people, locations) and the
+**relationships** between them into `kg_entities` / `kg_relations` (Supabase
+Postgres — no Neo4j, so it stays Vercel-deployable). This powers structured,
+cross-document queries that RAG alone can't answer:
+
+- `GET /equipment` — every asset mentioned across all documents
+- `GET /equipment/{key}/history` — that asset's failures, maintenance, and
+  inspections as a timeline (e.g. `/equipment/p101/history`)
+- `GET /failure-patterns` — recurring failures ranked by occurrence + affected assets
+
+Toggle with `ENABLE_KG` (requires `GEMINI_API_KEY`).
+
 ## Architecture
 
 ```
 Admin → POST /documents/upload → Supabase Storage + documents row
         extract (any file) → clean → chunk (1000/200) → batch-embed → pgvector
+        → entity/relation extraction → kg_entities/kg_relations
         → status=ready  (synchronous ingestion, so it works on serverless / Vercel)
 
 User → POST /query → embed → pgvector top-k → context → Gemini
@@ -113,6 +129,10 @@ resolves the role from `profiles`. `require_admin` guards write endpoints;
 | POST   | `/api/v1/search`                  | user  |
 | POST   | `/api/v1/summarize`               | user  |
 | GET    | `/api/v1/library`                 | user  |
+| GET    | `/api/v1/equipment`               | user  |
+| GET    | `/api/v1/equipment/{key}/history` | user  |
+| GET    | `/api/v1/failure-patterns`        | user  |
+| GET    | `/api/v1/graph/stats`             | user  |
 | GET    | `/api/v1/chat/sessions`           | user  |
 | GET    | `/api/v1/chat/sessions/{id}`      | user  |
 

@@ -64,6 +64,13 @@ class Settings(BaseSettings):
     # ---- OCR ----
     enable_ocr: bool = False
 
+    # ---- Knowledge graph ----
+    # Extract industrial entities/relationships (equipment, failures, inspections,
+    # maintenance) during ingestion and store them for equipment-history queries.
+    # Requires Gemini. Chars of document text fed to the extractor per document.
+    enable_kg: bool = True
+    kg_extract_max_chars: int = 16000
+
     @property
     def cors_origins_list(self) -> list[str]:
         """Exact CORS origins (entries without a wildcard).

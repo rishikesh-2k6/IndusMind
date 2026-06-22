@@ -140,3 +140,43 @@ class ChatSessionOut(BaseModel):
 
 class ChatSessionDetail(ChatSessionOut):
     messages: list[ChatMessageOut] = Field(default_factory=list)
+
+
+# --------------------------------------------------------------------------- #
+# Knowledge graph
+# --------------------------------------------------------------------------- #
+
+
+class EquipmentOut(BaseModel):
+    key: str
+    label: str
+    mentions: int
+
+
+class EquipmentEventOut(BaseModel):
+    relation: str
+    kind: str
+    key: str
+    label: str
+    date: str | None = None
+    summary: str | None = None
+    document_id: str | None = None
+
+
+class EquipmentHistoryOut(BaseModel):
+    key: str
+    events: list[EquipmentEventOut] = Field(default_factory=list)
+
+
+class FailurePatternOut(BaseModel):
+    failure_key: str
+    failure_label: str
+    occurrences: int
+    equipment_count: int
+    equipment: list[str] = Field(default_factory=list)
+
+
+class KgStatsOut(BaseModel):
+    entities: int
+    relations: int
+    equipment: int
