@@ -110,19 +110,26 @@ class EmbeddingService:
         import google.generativeai as genai
 
         genai.configure(api_key=settings.gemini_api_key)
+        batch_size = max(1, settings.embedding_batch_size)
 
         def _run() -> list[list[float]]:
             out: list[list[float]] = []
-            for text in texts:
+            for start in range(0, len(texts), batch_size):
+                batch = texts[start : start + batch_size]
                 resp = genai.embed_content(
                     model=settings.gemini_embedding_model,
-                    content=text,
+                    content=batch,  # batch request -> one round-trip per chunk-group
                     task_type="retrieval_document",
                     # gemini-embedding-001 defaults to 3072 dims; pin to the
                     # pgvector column size so vectors fit the schema.
                     output_dimensionality=self._dim,
                 )
-                out.append(resp["embedding"])
+                emb = resp["embedding"]
+                # A list input returns a list of vectors; a 1-item batch may come
+                # back as a single flat vector — normalise both to list-of-vectors.
+                if emb and isinstance(emb[0], (int, float)):
+                    emb = [emb]
+                out.extend(emb)
             return out
 
         return await asyncio.to_thread(_run)
@@ -130,14 +137,18 @@ class EmbeddingService:
     async def _embed_huggingface(self, texts: list[str]) -> list[list[float]]:
         url = _HF_API_URL.format(model=settings.hf_embedding_model)
         headers = {"Authorization": f"Bearer {settings.hf_api_token}"}
-        payload = {"inputs": texts}
+        batch_size = max(1, settings.embedding_batch_size)
+        out: list[list[float]] = []
         async with httpx.AsyncClient(timeout=60) as client:
-            resp = await client.post(url, headers=headers, json=payload)
-            resp.raise_for_status()
-            data = resp.json()
-        if not isinstance(data, list):
-            raise EmbeddingError(f"Unexpected HF response: {str(data)[:200]}")
-        return [self._normalize_hf(item) for item in data]
+            for start in range(0, len(texts), batch_size):
+                batch = texts[start : start + batch_size]
+                resp = await client.post(url, headers=headers, json={"inputs": batch})
+                resp.raise_for_status()
+                data = resp.json()
+                if not isinstance(data, list):
+                    raise EmbeddingError(f"Unexpected HF response: {str(data)[:200]}")
+                out.extend(self._normalize_hf(item) for item in data)
+        return out
 
     @staticmethod
     def _normalize_hf(item: list) -> list[float]:

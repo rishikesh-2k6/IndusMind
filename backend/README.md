@@ -8,12 +8,21 @@ answers via RAG + Gemini.
 > Backend only. The React/JSX (Vite) frontend lives at the repo root and talks to
 > this API over JSON REST. OpenAPI docs are served at `/docs`.
 
+## Supported files
+
+Any file. Rich formats have dedicated extractors — **PDF** (PyMuPDF), **DOCX**,
+**PPTX** (stdlib), **XLSX**, **CSV**, **HTML**, and **images** (OCR, optional).
+Everything else (TXT, MD, JSON, XML, YAML, source code, logs, …) goes through a
+universal text decoder. True binaries are rejected with a clear error and the
+document is marked `failed`. Uploads stream to **Supabase Storage** (bucket
+auto-created); chunks + embeddings land in **Supabase Postgres (pgvector)**.
+
 ## Architecture
 
 ```
 Admin → POST /documents/upload → Supabase Storage + documents row
-        extract → clean → chunk (1000/200) → embed → pgvector → status=ready
-        (synchronous ingestion, so it works on serverless / Vercel)
+        extract (any file) → clean → chunk (1000/200) → batch-embed → pgvector
+        → status=ready  (synchronous ingestion, so it works on serverless / Vercel)
 
 User → POST /query → embed → pgvector top-k → context → Gemini
                  → { answer, sources[], confidence_score, related_documents[] }

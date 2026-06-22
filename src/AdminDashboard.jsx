@@ -163,7 +163,7 @@ export default function AdminDashboard({ onLogout }) {
                 ref={fileInputRef}
                 type="file"
                 onChange={handleFileChange}
-                accept=".pdf,.docx,.xlsx,.xls,.csv,.txt,.md,.png,.jpg,.jpeg"
+                accept="*"
                 className="hidden"
               />
               <button

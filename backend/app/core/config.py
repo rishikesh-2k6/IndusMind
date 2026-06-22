@@ -53,6 +53,9 @@ class Settings(BaseSettings):
     hf_api_token: str = ""
     hf_embedding_model: str = "BAAI/bge-base-en-v1.5"
 
+    # Embeddings are generated in batches to cut round-trips during ingestion.
+    embedding_batch_size: int = 64
+
     # ---- Chunking / retrieval ----
     chunk_size: int = 1000
     chunk_overlap: int = 200

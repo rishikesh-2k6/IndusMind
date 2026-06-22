@@ -28,6 +28,7 @@ class StorageService:
     def __init__(self) -> None:
         self._client = None
         self._use_supabase = settings.has_supabase
+        self._bucket_ready = False
         if self._use_supabase:
             from supabase import create_client
 
@@ -46,8 +47,21 @@ class StorageService:
         """Store bytes at the given path. Returns the stored path/key."""
         return await asyncio.to_thread(self._upload_sync, path, data, content_type)
 
+    def _ensure_bucket(self) -> None:
+        """Create the storage bucket on first use if it doesn't already exist."""
+        if self._bucket_ready or not self._use_supabase:
+            return
+        try:
+            self._client.storage.create_bucket(settings.supabase_bucket)
+            logger.info("Created Supabase bucket '%s'", settings.supabase_bucket)
+        except Exception as exc:  # noqa: BLE001
+            # Most commonly: bucket already exists — that's fine.
+            logger.debug("create_bucket skipped for '%s': %s", settings.supabase_bucket, exc)
+        self._bucket_ready = True
+
     def _upload_sync(self, path: str, data: bytes, content_type: str) -> str:
         if self._use_supabase:
+            self._ensure_bucket()
             try:
                 self._client.storage.from_(settings.supabase_bucket).upload(
                     path,
